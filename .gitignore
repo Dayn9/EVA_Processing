@@ -130,3 +130,5 @@ dmypy.json
 
 # large XDF files
 .xdf
+
+*.xdf
