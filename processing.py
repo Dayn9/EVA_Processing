@@ -10,8 +10,10 @@ import pyxdf # pip install pyxdf
 # the command (pip install pyxdf) is necessary to make use of the pyxdf library
 # recommended: use the cell structure to load xdf once and avoid loading times
 
-FILENAME = 'r2.xdf' #ex: 'block_T1.xdf'
+FILENAME = 'block_T1.xdf' #ex: 'block_T1.xdf'
 Hz = 2000
+CALIBRATION_WINDOW = [1, 3]
+SECONDS = 5 
 
 # %% load in the XDF file from current directory
 # SOURCE (modified):
@@ -33,12 +35,12 @@ for ix, stream in enumerate(streams):
     )
     if any(stream['time_stamps']):
         print("\tDuration: {} s".format(stream['time_stamps'][-1] - stream['time_stamps'][0]))
-print("Done.")
+print("Done Loading")
 
 # %% Data Extraction
 # Extract the raw EMG data from the streams
 
-CHANNELS = 2 #default to 2
+CHANNELS = 2 #number of emg sensors (default to 2)
 
 emgData = [] #(largeNum,)
 emgTimes = [] #(largeNum, CHANNELS)
@@ -67,6 +69,8 @@ def bandpass(data):
     
     filtered = []
     
+    print("Filtering...")
+    
     #loop over each time step
     for d in data:
         #loop over channels at timestep
@@ -90,8 +94,9 @@ def sliding_rms(data, window):
     rms = [[],[]] # 2 lists (used as queues)
     
     print("Smoothing...")
+    
     for d in data:
-        #dequeue oldest data when full
+        #dequeue oldest data (when full)
         if(len(rms[0]) == window):
             del rms[0][0] 
             del rms[1][0]
@@ -99,6 +104,7 @@ def sliding_rms(data, window):
         rms[0].append(abs(d[0]))
         rms[1].append(abs(d[1]))
         
+        #sum the data in the window a
         smoothed.append([sum(rms[0])/window, sum(rms[1])/window])
         #smoothed.append([max(rms[0]), max(rms[1])])
                 
@@ -118,6 +124,7 @@ def sliding_rms_weighted(data, window):
         weights[i] = (i * 2/ window)
     
     print("Smoothing...")
+    
     for d in data:
         #dequeue oldest data when full
         if(len(rms[0]) == window):
@@ -138,45 +145,48 @@ rest_avg = np.zeros(CHANNELS)
 flex_max = np.zeros(CHANNELS) 
 ext_max = np.zeros(CHANNELS) 
 
+
 def calibrate(data):
     
-    seconds = 5
-    samples = Hz * seconds # samples in calibration
+    rest_period = [0, Hz * SECONDS]
+    flex_period = [Hz * ( SECONDS     + CALIBRATION_WINDOW[0]), Hz * ( SECONDS     + CALIBRATION_WINDOW[1])]
+    ext_period =  [Hz * ( SECONDS * 2 + CALIBRATION_WINDOW[0]), Hz * ( SECONDS * 2 + CALIBRATION_WINDOW[1])]
     
+    print("Calibrating...")
+
 # CALIBRATION METHODS
     
     def calibrate_rest(d):
         for i in range(CHANNELS):
-            rest_avg[i] += abs(d[i]) / samples
+            rest_avg[i] += abs(d[i]) / (rest_period[1] - rest_period[0])
    
     def calibrate_flex(d):
         for i in range(CHANNELS):
-            #flex_max[i] = max(abs(d[i]), flex_max[i])
-            flex_max[i] += abs(d[i]) / samples
+            flex_max[i] = max(abs(d[i]), flex_max[i])
+            #flex_max[i] += abs(d[i]) / (flex_period[1] - flex_period[0])
 
     def calibrate_ext(d):
         for i in range(CHANNELS):
-            #ext_max[i] = max(abs(d[i]), ext_max[i])
-            ext_max[i] += abs(d[i]) / samples
+            ext_max[i] = max(abs(d[i]), ext_max[i])
+            #ext_max[i] += abs(d[i]) / (ext_period[1] - ext_period[0])
     
     # Calibration Process
-    # 10000 comes from 2000 Hz * 5 seconds
-    for d in data[0:samples]:
+    # 10000 comes from 2000 Hz * 5 SECONDS
+    for d in data[rest_period[0]:rest_period[1]]:
         calibrate_rest(d)
         
-    for d in data[samples:samples*2]:
+    for d in data[flex_period[0]:flex_period[1]]:
         calibrate_flex(d)
         
-    for d in data[samples*2:samples*3]:
+    for d in data[ext_period[0]:ext_period[1]]:
         calibrate_ext(d)
     
     
     #DEBUG info and pluts
-    print('REST AVG', rest_avg)
-    print('FLEX MAX', flex_max)
-    print('EXT MAX', ext_max)
-    
-    
+    print('REST AVG:', rest_avg)
+    print('FLEX MAX:', flex_max)
+    print('EXT MAX:', ext_max)
+     
 # %% Normalization
 
 def normalize(data):
@@ -196,6 +206,7 @@ def normalize(data):
     return normalized
 
 # %% RUN functions and Plot results
+
 plt.figure()    
 plt.title("EMG")
 plt.plot(emgTimes, emgData)    
